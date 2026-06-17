@@ -1080,7 +1080,38 @@ html, body {
   color: var(--text-muted);
 }
 
-/* ── Budget Configuration Page ──────────────────────────── */
+/* ── My Matters ──────────────────────────────────────────── */
+.matters-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 900px) {
+  .matters-summary-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── Email Configuration ─────────────────────────────────── */
+.email-config-form {
+  max-width: 560px;
+}
+
+.email-config-form .field-hint {
+  margin-top: 4px;
+}
+
+.email-config-form code {
+  background: var(--navy-100);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--navy-700);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BUDGET CONFIGURATION PAGE
+   ═══════════════════════════════════════════════════════════ */
 .budget-config-grid {
   display: flex;
   flex-direction: column;
@@ -1170,6 +1201,10 @@ html, body {
   border-radius: 5px;
   transition: width 0.4s ease;
 }
+
+.subcat-bar-fill.util-fill.good  { background: linear-gradient(90deg, var(--green), #4ade80); }
+.subcat-bar-fill.util-fill.warn  { background: linear-gradient(90deg, var(--orange), #fbbf24); }
+.subcat-bar-fill.util-fill.danger { background: linear-gradient(90deg, var(--red), #f87171); }
 
 .total-row td {
   border-top: 2px solid var(--border) !important;

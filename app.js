@@ -66,7 +66,39 @@ const INITIAL_STATE = {
 
 // ── State Management ─────────────────────────────────────────
 
-let STATE = JSON.parse(localStorage.getItem('dp_budget_state') || 'null') || INITIAL_STATE;
+let STATE = JSON.parse(localStorage.getItem('dp_budget_state') || 'null') || JSON.parse(JSON.stringify(INITIAL_STATE));
+
+// ── Migration: ensure all required fields exist ─────────────
+function migrateState() {
+  let changed = false;
+  if (!STATE.budgetConfig) {
+    STATE.budgetConfig = JSON.parse(JSON.stringify(INITIAL_STATE.budgetConfig));
+    changed = true;
+  }
+  if (!STATE.budgetConfig.totalBudget) {
+    STATE.budgetConfig.totalBudget = 1223200;
+    changed = true;
+  }
+  if (!STATE.budgetConfig.subcategoryAllocations) {
+    STATE.budgetConfig.subcategoryAllocations = BACKOFFICE_SUBCATEGORIES.reduce((acc, cat, i) => {
+      const portions = [0.18, 0.20, 0.14, 0.12, 0.10, 0.10, 0.06, 0.05, 0.05];
+      acc[cat.id] = Math.round(1223200 * portions[i]);
+      return acc;
+    }, {});
+    changed = true;
+  }
+  // Ensure email config exists
+  if (!STATE.emailConfig) {
+    STATE.emailConfig = { serviceId: '', templateId: '', publicKey: '' };
+    changed = true;
+  }
+  // Add owner to existing requests/expenses if missing
+  [...(STATE.budgetRequests||[]), ...(STATE.expenses||[])].forEach(item => {
+    if (!item.owner && item.submittedBy) { item.owner = item.submittedBy; changed = true; }
+  });
+  if (changed) saveState();
+}
+migrateState();
 
 function saveState() {
   localStorage.setItem('dp_budget_state', JSON.stringify(STATE));
@@ -162,9 +194,10 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-// ── Email Notification (simulated) ───────────────────────────
+// ── Email Notification (EmailJS or simulated fallback) ───────
 
 function sendEmail(to, subject, body) {
+  // Always store in-app notification
   const note = {
     id: genId(),
     to,
@@ -176,6 +209,123 @@ function sendEmail(to, subject, body) {
   STATE.notifications.push(note);
   saveState();
   console.log(`[EMAIL] To: ${to} | Subject: ${subject}`);
+
+  // Try sending real email via EmailJS if configured
+  const cfg = STATE.emailConfig || {};
+  if (cfg.serviceId && cfg.templateId && cfg.publicKey && typeof emailjs !== 'undefined') {
+    emailjs.init(cfg.publicKey);
+    const templateParams = {
+      to_email: to,
+      to_name: to.split('@')[0],
+      subject: subject,
+      message_body: body,
+      from_name: 'DragonPass Legal Budget Manager',
+      reply_to: 'tao.guan@dragonpass.com'
+    };
+    emailjs.send(cfg.serviceId, cfg.templateId, templateParams)
+      .then(() => console.log('[EMAIL] Real email sent successfully to', to))
+      .catch(err => console.warn('[EMAIL] Failed to send real email:', err?.text || err));
+  }
+}
+
+// ── Email Configuration (GC only) ───────────────────────────
+
+function renderEmailConfig(content, actions) {
+  if (!isGC()) { content.innerHTML = '<p>Access denied.</p>'; return; }
+  const cfg = STATE.emailConfig || { serviceId: '', templateId: '', publicKey: '', fromName: 'DragonPass Legal' };
+
+  content.innerHTML = `
+  <div class="dash-card full">
+    <div class="dash-card-title">📧 Email Notification Configuration</div>
+    <div style="max-width:560px;">
+      <p style="color:var(--text-secondary); margin-bottom:20px; font-size:13.5px; line-height:1.6;">
+        Configure real email notifications using <strong>EmailJS</strong> (free tier: 200 emails/month).
+        This enables automatic email alerts when requests are submitted, approved, or rejected.
+      </p>
+
+      <div class="email-config-form">
+        <div class="field-group">
+          <label>EmailJS Service ID *</label>
+          <input type="text" id="emailServiceId" value="${escapeHtml(cfg.serviceId)}" placeholder="e.g. service_xxxxxxxxx" />
+          <div class="field-hint">From your EmailJS dashboard → Email Services → Service ID</div>
+        </div>
+        <div class="field-group">
+          <label>EmailJS Template ID *</label>
+          <input type="text" id="emailTemplateId" value="${escapeHtml(cfg.templateId)}" placeholder="e.g. template_xxxxxxxxx" />
+          <div class="field-hint">Create an email template in EmailJS with variables: {{to_email}}, {{subject}}, {{message_body}}</div>
+        </div>
+        <div class="field-group">
+          <label>EmailJS Public Key *</label>
+          <input type="text" id="emailPublicKey" value="${escapeHtml(cfg.publicKey)}" placeholder="e.g. xxxxxxxx" />
+          <div class="field-hint">From your EmailJS dashboard → Account → Public Key</div>
+        </div>
+        <div class="field-group">
+          <label>Sender Display Name</label>
+          <input type="text" id="emailFromName" value="${escapeHtml(cfg.fromName || 'DragonPass Legal')}" placeholder="DragonPass Legal & Compliance" />
+        </div>
+
+        <div style="margin-top:16px; padding:16px; background:var(--navy-50); border-radius:var(--radius); font-size:12.5px; line-height:1.7; color:var(--navy-800);">
+          <strong>📋 Setup Instructions:</strong>
+          <ol style="margin:8px 0 0 18px; padding:0;">
+            <li>Create a free account at <a href="https://www.emailjs.com" target="_blank" style="color:var(--navy-500)">emailjs.com</a></li>
+            <li>Add an Email Service (Gmail, Outlook, etc.) — this provides your SMTP connection</li>
+            <li>Create an Email Template with these variables: <code>{{to_email}}</code>, <code>{{to_name}}</code>, <code>{{subject}}</code>, <code>{{message_body}}</code></li>
+            <li>Copy your Service ID, Template ID, and Public Key into the fields above</li>
+            <li>Click "Save Configuration" and then "Send Test Email" to verify</li>
+          </ol>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-primary" id="saveEmailConfigBtn">💾 Save Configuration</button>
+          <button class="btn btn-secondary" id="testEmailBtn">📧 Send Test Email</button>
+        </div>
+        <div id="emailConfigStatus" style="margin-top:10px;"></div>
+      </div>
+    </div>
+  </div>`;
+
+  document.getElementById('saveEmailConfigBtn').addEventListener('click', () => {
+    STATE.emailConfig = {
+      serviceId: document.getElementById('emailServiceId').value.trim(),
+      templateId: document.getElementById('emailTemplateId').value.trim(),
+      publicKey: document.getElementById('emailPublicKey').value.trim(),
+      fromName: document.getElementById('emailFromName').value.trim()
+    };
+    saveState();
+    showToast('Email configuration saved.');
+    document.getElementById('emailConfigStatus').innerHTML = '<span style="color:var(--green);font-weight:600;">✓ Configuration saved successfully.</span>';
+  });
+
+  document.getElementById('testEmailBtn').addEventListener('click', () => {
+    const statusEl = document.getElementById('emailConfigStatus');
+    statusEl.innerHTML = '<span style="color:var(--orange)">Sending test email...</span>';
+    const cfg = {
+      serviceId: document.getElementById('emailServiceId').value.trim(),
+      templateId: document.getElementById('emailTemplateId').value.trim(),
+      publicKey: document.getElementById('emailPublicKey').value.trim()
+    };
+    if (!cfg.serviceId || !cfg.templateId || !cfg.publicKey) {
+      statusEl.innerHTML = '<span style="color:var(--red)">⚠ Please fill in all required fields first.</span>';
+      return;
+    }
+    if (typeof emailjs === 'undefined') {
+      statusEl.innerHTML = '<span style="color:var(--red)">⚠ EmailJS library not loaded. Check internet connection.</span>';
+      return;
+    }
+    emailjs.init(cfg.publicKey);
+    emailjs.send(cfg.serviceId, cfg.templateId, {
+      to_email: STATE.currentUser.email,
+      to_name: STATE.currentUser.name || STATE.currentUser.email,
+      subject: '🧪 DragonPass Budget Manager — Test Email',
+      message_body: 'This is a test email from DragonPass Legal Budget Manager.\nIf you received this, email notifications are working correctly!',
+      from_name: 'DragonPass Legal Budget Manager'
+    }).then(() => {
+      statusEl.innerHTML = '<span style="color:var(--green);font-weight:600;">✅ Test email sent! Check your inbox.</span>';
+      showToast('Test email sent!');
+    }).catch(err => {
+      statusEl.innerHTML = `<span style="color:var(--red)">❌ Failed: ${err.text || 'Check your credentials and try again.'}</span>`;
+    });
+  });
 }
 
 // ── Auth ─────────────────────────────────────────────────────
@@ -279,6 +429,7 @@ function renderShell() {
   const u = STATE.currentUser;
   const gcNav = isGC() ? `
     <div class="nav-item" data-page="budget-config"><span class="nav-icon">⚙️</span> Budget Configuration</div>
+    <div class="nav-item" data-page="email-config"><span class="nav-icon">📧</span> Email Configuration</div>
     <div class="nav-item" data-page="users"><span class="nav-icon">👥</span> User Management</div>
     <div class="nav-item" data-page="notifications"><span class="nav-icon">🔔</span> Notifications <span class="badge">${STATE.notifications.filter(n=>!n.read).length || ''}</span></div>
   ` : `
@@ -297,6 +448,7 @@ function renderShell() {
       <nav class="nav">
         <div class="nav-section">MAIN</div>
         <div class="nav-item" data-page="dashboard"><span class="nav-icon">📊</span> Dashboard</div>
+        <div class="nav-item" data-page="my-matters"><span class="nav-icon">📂</span> My Matters</div>
         <div class="nav-section">BUDGET</div>
         <div class="nav-item" data-page="budget-requests"><span class="nav-icon">📋</span> Budget Requests</div>
         <div class="nav-item" data-page="expenses"><span class="nav-icon">🧾</span> Dept. Expenses</div>
@@ -349,10 +501,12 @@ function attachShellHandlers() {
 function renderMain() {
   const titles = {
     dashboard: 'Dashboard',
+    'my-matters': 'My Matters',
     'budget-requests': 'Budget Requests',
     expenses: 'Department Expenses',
     vendors: 'Vendor Registry',
     'budget-config': 'Budget Configuration',
+    'email-config': 'Email Configuration',
     users: 'User Management',
     notifications: 'Notifications'
   };
@@ -362,10 +516,12 @@ function renderMain() {
 
   switch (currentPage) {
     case 'dashboard':       renderDashboard(content, actions); break;
+    case 'my-matters':      renderMyMatters(content, actions); break;
     case 'budget-requests': renderBudgetRequests(content, actions); break;
     case 'expenses':        renderExpenses(content, actions); break;
     case 'vendors':         renderVendors(content, actions); break;
     case 'budget-config':   renderBudgetConfig(content, actions); break;
+    case 'email-config':     renderEmailConfig(content, actions); break;
     case 'users':           renderUsers(content, actions); break;
     case 'notifications':   renderNotifications(content, actions); break;
     default:                content.innerHTML = '<p>Page not found.</p>';
@@ -380,9 +536,16 @@ function renderBudgetConfig(content, actions) {
   if (!isGC()) { content.innerHTML = '<p>Access denied.</p>'; return; }
   actions.innerHTML = `<button class="btn btn-primary" id="saveBudgetBtn">💾 Save Configuration</button>`;
 
-  const cfg = STATE.budgetConfig;
+  const cfg = STATE.budgetConfig || INITIAL_STATE.budgetConfig;
   const totalAllocated = Object.values(cfg.subcategoryAllocations).reduce((a, b) => a + b, 0);
   const diff = cfg.totalBudget - totalAllocated;
+
+  // Calculate actual spending
+  const allRequests = STATE.budgetRequests.filter(r => r.status === 'approved');
+  const allExpenses = STATE.expenses.filter(e => e.status === 'approved');
+  const totalSpending = [...allRequests, ...allExpenses].reduce((s, x) => s + (parseFloat(x.amount)||0), 0);
+  const budgetPct = cfg.totalBudget ? Math.round((totalSpending / cfg.totalBudget) * 100) : 0;
+  const remainingBudget = Math.max(0, cfg.totalBudget - totalSpending);
 
   content.innerHTML = `
   <div class="budget-config-grid">
@@ -395,46 +558,72 @@ function renderBudgetConfig(content, actions) {
         </div>
         <div class="total-budget-stats">
           <div class="tbs-item">
-            <span class="tbs-val" id="cfgTotalDisplay">${formatCurrency(cfg.totalBudget)}</span>
+            <span class="tbs-val">${formatCurrency(cfg.totalBudget)}</span>
             <span class="tbs-label">Total Budget</span>
           </div>
           <div class="tbs-item">
-            <span class="tbs-val" id="cfgAllocatedDisplay">${formatCurrency(totalAllocated)}</span>
-            <span class="tbs-label">Allocated</span>
+            <span class="tbs-val" style="color:var(--navy-500)">${formatCurrency(totalAllocated)}</span>
+            <span class="tbs-label">Allocated to Subcats</span>
           </div>
           <div class="tbs-item">
-            <span class="tbs-val ${diff < 0 ? 'over' : 'under'}" id="cfgDiffDisplay">${diff < 0 ? '-' : ''}${formatCurrency(Math.abs(diff))}</span>
+            <span class="tbs-val ${diff < 0 ? 'over' : 'under'}">${diff < 0 ? '-' : ''}${formatCurrency(Math.abs(diff))}</span>
             <span class="tbs-label">${diff >= 0 ? 'Unallocated' : 'Over-allocated'}</span>
           </div>
+        </div>
+      </div>
+
+      <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+        <div class="dash-card-title" style="margin-bottom:12px;">Budget Utilization Overview</div>
+        <div class="budget-util-bar">
+          <div class="budget-util-track">
+            <div class="budget-util-fill ${budgetPct > 90 ? 'danger' : budgetPct > 70 ? 'warn' : 'good'}" style="width:${Math.min(budgetPct, 100)}%">
+              <span class="budget-util-label">${budgetPct}% used — ${formatCurrency(totalSpending)} of ${formatCurrency(cfg.totalBudget)}</span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:13px;">
+          <span><strong>Spent:</strong> ${formatCurrency(totalSpending)}</span>
+          <span><strong>Remaining:</strong> ${formatCurrency(remainingBudget)}</span>
+          <span>${allRequests.length + allExpenses.length} approved items</span>
         </div>
       </div>
     </div>
 
     <div class="dash-card full">
-      <div class="dash-card-title">Backoffice Subcategory Allocations</div>
+      <div class="dash-card-title">Backoffice Subcategory Allocations & Spending</div>
       <div class="subcat-table-wrap">
         <table class="data-table" id="subcatTable">
           <thead><tr>
             <th>Subcategory</th>
             <th>Allocation (USD)</th>
             <th>% of Total</th>
-            <th>Allocation</th>
+            <th>Approved Spending</th>
+            <th>Utilization</th>
+            <th>Status</th>
           </tr></thead>
           <tbody>
             ${BACKOFFICE_SUBCATEGORIES.map(cat => {
               const alloc = cfg.subcategoryAllocations[cat.id] || 0;
               const pct = cfg.totalBudget ? ((alloc / cfg.totalBudget) * 100).toFixed(1) : '0.0';
+              // For now, spending is aggregated across all subcategories (future: assign requests to subcats)
+              const catSpending = 0; // TODO: add subcategory field to requests/expenses
+              const utilPct = alloc ? ((catSpending / alloc) * 100).toFixed(0) : '0';
+              const statusClass = alloc > 0 && catSpending === 0 ? 'status-pending' : (catSpending > alloc ? 'status-rejected' : 'status-approved');
+              const statusText = alloc > 0 && catSpending === 0 ? 'No spend yet' : (catSpending > alloc ? 'Over' : 'On track');
               return `<tr>
                 <td><strong>${escapeHtml(cat.name)}</strong></td>
                 <td><input type="number" class="subcat-alloc-input" data-cat="${cat.id}" value="${alloc}" min="0" step="100" /></td>
                 <td><span class="subcat-pct" data-cat="${cat.id}">${pct}%</span></td>
+                <td><span class="subcat-spending" data-cat="${cat.id}">${formatCurrency(catSpending)}</span></td>
                 <td>
-                  <div class="subcat-bar-wrap">
+                  <div class="subcat-bar-wrap" style="min-width:80px;">
                     <div class="subcat-bar-track">
-                      <div class="subcat-bar-fill" data-cat="${cat.id}" style="width:${pct}%"></div>
+                      <div class="subcat-bar-fill util-fill ${Number(utilPct)>80?'danger':Number(utilPct)>50?'warn':'good'}" data-cat="${cat.id}" style="width:${Math.min(Number(utilPct),100)}%"></div>
                     </div>
+                    <span style="font-size:11px;color:var(--text-muted);margin-left:6px;">${utilPct}%</span>
                   </div>
                 </td>
+                <td><span class="status-badge ${statusClass}">${statusText}</span></td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -443,6 +632,8 @@ function renderBudgetConfig(content, actions) {
               <td><strong>Total</strong></td>
               <td><strong id="subcatTotal">${formatCurrency(totalAllocated)}</strong></td>
               <td><strong id="subcatTotalPct">${cfg.totalBudget ? ((totalAllocated / cfg.totalBudget) * 100).toFixed(1) : '0.0'}%</strong></td>
+              <td><strong>${formatCurrency(totalSpending)}</strong></td>
+              <td><strong>${budgetPct}%</strong></td>
               <td></td>
             </tr>
           </tfoot>
@@ -451,8 +642,26 @@ function renderBudgetConfig(content, actions) {
     </div>
 
     <div class="dash-card full">
-      <div class="dash-card-title">Budget Allocation Overview</div>
+      <div class="dash-card-title">Budget Allocation Overview (Visual)</div>
       <div class="allocation-chart" id="allocationChart"></div>
+    </div>
+
+    <div class="dash-card full">
+      <div class="dash-card-title">Fiscal Notes</div>
+      <div class="field-group">
+        <label>Notes / Remarks</label>
+        <textarea id="cfgNotes" rows="3" placeholder="Any notes about the budget allocation...">${escapeHtml(cfg.notes || '')}</textarea>
+      </div>
+      <div class="form-row" style="margin-top:8px">
+        <div class="field-group">
+          <label>Fiscal Year</label>
+          <input type="text" id="cfgFiscalYear" value="${escapeHtml(cfg.fiscalYear || 'FY 2025-2026')}" placeholder="e.g. FY 2025-2026" />
+        </div>
+        <div class="field-group">
+          <label>Last Updated</label>
+          <input type="text" value="${cfg.lastUpdated ? formatDate(cfg.lastUpdated) : '—'}" readonly style="background:var(--bg);color:var(--text-muted)" />
+        </div>
+      </div>
     </div>
   </div>`;
 
@@ -498,7 +707,9 @@ function renderBudgetConfig(content, actions) {
     document.querySelectorAll('.subcat-alloc-input').forEach(input => {
       allocations[input.dataset.cat] = parseFloat(input.value) || 0;
     });
-    STATE.budgetConfig = { totalBudget, subcategoryAllocations: allocations };
+    const notes = document.getElementById('cfgNotes')?.value?.trim() || '';
+    const fiscalYear = document.getElementById('cfgFiscalYear')?.value?.trim() || 'FY 2025-2026';
+    STATE.budgetConfig = { totalBudget, subcategoryAllocations: allocations, notes, fiscalYear, lastUpdated: new Date().toISOString() };
     saveState();
     showToast('Budget configuration saved successfully.');
   });
@@ -685,10 +896,12 @@ function renderDashboard(content, actions) {
 function renderMiniTable(requests) {
   if (!requests.length) return '<div class="empty-note">No requests yet.</div>';
   return `<table class="mini-table">
-    <thead><tr><th>Vendor</th><th>Description</th><th>Amount</th><th>Status</th><th>Payment Date</th></tr></thead>
+    <thead><tr><th>Owner</th><th>Vendor</th><th>Description</th><th>Amount</th><th>Status</th><th>Payment Date</th></tr></thead>
     <tbody>${requests.map(r => {
       const v = STATE.vendors.find(x => x.id === r.vendorId);
+      const owner = STATE.users.find(u => u.email === (r.owner || r.submittedBy));
       return `<tr>
+        <td>${escapeHtml(owner ? owner.name : (r.owner || r.submittedBy))}</td>
         <td>${escapeHtml(v ? v.name : '—')}</td>
         <td class="desc-cell">${escapeHtml(r.description || '—')}</td>
         <td>${formatCurrency(r.amount)}</td>
@@ -697,6 +910,155 @@ function renderMiniTable(requests) {
       </tr>`;
     }).join('')}</tbody>
   </table>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MY MATTERS (Personal dashboard for each team member)
+// ═══════════════════════════════════════════════════════════════
+
+function renderMyMatters(content, actions) {
+  actions.innerHTML = '';
+  const userEmail = STATE.currentUser.email;
+
+  // Collect all matters related to this user
+  const myRequests = STATE.budgetRequests.filter(r => r.submittedBy === userEmail || r.owner === userEmail);
+  const myExpenses = STATE.expenses.filter(e => e.submittedBy === userEmail || e.owner === userEmail);
+  const myVendors = STATE.vendors.filter(v => v.addedBy === userEmail);
+
+  // Summary stats
+  const pendingCount = [...myRequests, ...myExpenses].filter(x => x.status === 'pending').length;
+  const approvedCount = [...myRequests, ...myExpenses].filter(x => x.status === 'approved').length;
+  const rejectedCount = [...myRequests, ...myExpenses].filter(x => x.status === 'rejected').length;
+  const totalAmount = [...myRequests, ...myExpenses].reduce((s, x) => s + (parseFloat(x.amount)||0), 0);
+
+  content.innerHTML = `
+  <div class="matters-summary-grid">
+    <div class="stat-card accent-blue">
+      <div class="stat-label">Total Matters</div>
+      <div class="stat-value">${myRequests.length + myExpenses.length + myVendors.length}</div>
+      <div class="stat-sub">All your items</div>
+    </div>
+    <div class="stat-card accent-orange">
+      <div class="stat-label">Pending Action</div>
+      <div class="stat-value">${pendingCount + myVendors.filter(v=>v.status==='pending').length}</div>
+      <div class="stat-sub">Awaiting review</div>
+    </div>
+    <div class="stat-card accent-green">
+      <div class="stat-label">Approved</div>
+      <div class="stat-value">${approvedCount}</div>
+      <div class="stat-sub">${rejectedCount} rejected</div>
+    </div>
+    <div class="stat-card accent-gold">
+      <div class="stat-label">Total Amount</div>
+      <div class="stat-value">${formatCurrency(totalAmount)}</div>
+      <div class="stat-sub">${myRequests.length} req · ${myExpenses.length} exp</div>
+    </div>
+  </div>
+
+  <div class="filter-bar" style="margin-top:20px">
+    <select id="mattersTypeFilter" class="filter-select">
+      <option value="">All Types</option>
+      <option value="requests">Budget Requests (${myRequests.length})</option>
+      <option value="expenses">Dept. Expenses (${myExpenses.length})</option>
+      <option value="vendors">Vendor Registrations (${myVendors.length})</option>
+    </select>
+    <select id="mattersStatusFilter" class="filter-select">
+      <option value="">All Statuses</option>
+      <option value="pending">Pending</option>
+      <option value="approved">Approved</option>
+      <option value="rejected">Rejected</option>
+    </select>
+    <input type="text" id="mattersSearch" placeholder="Search..." class="search-input" style="max-width:220px;" />
+  </div>
+
+  <div id="mattersContent"></div>`;
+
+  function renderMatters() {
+    const typeFilter = document.getElementById('mattersTypeFilter')?.value || '';
+    const statusFilter = document.getElementById('mattersStatusFilter')?.value || '';
+    const searchQ = document.getElementById('mattersSearch')?.value?.toLowerCase() || '';
+
+    let items = [];
+
+    if (!typeFilter || typeFilter === 'requests') {
+      myRequests.forEach(r => {
+        if (statusFilter && r.status !== statusFilter) return;
+        if (searchQ) {
+          const v = STATE.vendors.find(x => x.id === r.vendorId);
+          if (!(v && v.name.toLowerCase().includes(searchQ)) && !(r.description||'').toLowerCase().includes(searchQ)) return;
+        }
+        items.push({ type: 'request', data: r });
+      });
+    }
+    if (!typeFilter || typeFilter === 'expenses') {
+      myExpenses.forEach(e => {
+        if (statusFilter && e.status !== statusFilter) return;
+        if (searchQ && !(e.description||'').toLowerCase().includes(searchQ) && !e.category.toLowerCase().includes(searchQ)) return;
+        items.push({ type: 'expense', data: e });
+      });
+    }
+    if (!typeFilter || typeFilter === 'vendors') {
+      myVendors.forEach(v => {
+        if (statusFilter && v.status !== statusFilter) return;
+        if (searchQ && !v.name.toLowerCase().includes(searchQ)) return;
+        items.push({ type: 'vendor', data: v });
+      });
+    }
+
+    // Sort by date descending
+    items.sort((a, b) => new Date(b.data.submittedAt || b.data.addedAt) - new Date(a.data.submittedAt || a.data.addedAt));
+
+    const container = document.getElementById('mattersContent');
+    if (!items.length) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-icon">📂</div><p>No matters found matching your filters.</p></div>';
+      return;
+    }
+
+    container.innerHTML = `<table class="data-table">
+      <thead><tr>
+        <th>Type</th><th>Description</th><th>Amount</th><th>Status</th><th>Date</th><th>Actions</th>
+      </tr></thead>
+      <tbody>${items.map(item => {
+        if (item.type === 'request') {
+          const r = item.data;
+          const v = STATE.vendors.find(x => x.id === r.vendorId);
+          return `<tr>
+            <td><span class="tag tag-cat">Request</span></td>
+            <td>${escapeHtml(v ? v.name + ': ' : '')}${escapeHtml(r.description||'—')}</td>
+            <td><strong>${formatCurrency(r.amount)}</strong></td>
+            <td><span class="status-badge status-${r.status}">${r.status}</span></td>
+            <td>${formatDate(r.submittedAt)}</td>
+            <td class="actions-cell"><button class="btn-link" onclick="navigate('budget-requests');setTimeout(()=>openRequestForm('${r.id}'),100)">View</button></td>
+          </tr>`;
+        } else if (item.type === 'expense') {
+          const e = item.data;
+          return `<tr>
+            <td><span class="tag tag-allocation">Expense</span></td>
+            <td>[${escapeHtml(e.category)}] ${escapeHtml(e.description||'—')}</td>
+            <td><strong>${formatCurrency(e.amount)}</strong></td>
+            <td><span class="status-badge status-${e.status}">${e.status}</span></td>
+            <td>${formatDate(e.submittedAt)}</td>
+            <td class="actions-cell"><button class="btn-link" onclick="navigate('expenses');setTimeout(()=>openExpenseForm('${e.id}'),100)">View</button></td>
+          </tr>`;
+        } else {
+          const v = item.data;
+          return `<tr>
+            <td><span class="tag tag-role-member">Vendor</span></td>
+            <td><strong>${escapeHtml(v.name)}</strong> ${(v.contacts||[]).map(c=>c.name).join(', ')}</td>
+            <td>—</td>
+            <td><span class="status-badge status-${v.status}">${v.status}</span></td>
+            <td>${formatDate(v.addedAt)}</td>
+            <td class="actions-cell"><button class="btn-link" onclick="navigate('vendors');setTimeout(()=>openVendorForm('${v.id}'),100)">View</button></td>
+          </tr>`;
+        }
+      }).join('')}</tbody>
+    </table>`;
+  }
+
+  document.getElementById('mattersTypeFilter')?.addEventListener('change', renderMatters);
+  document.getElementById('mattersStatusFilter')?.addEventListener('change', renderMatters);
+  document.getElementById('mattersSearch')?.addEventListener('input', renderMatters);
+  renderMatters();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -750,12 +1112,14 @@ function renderRequestList(requests) {
   }
   el.innerHTML = `<table class="data-table">
     <thead><tr>
-      <th>Vendor</th><th>Description</th><th>Amount</th><th>Fee Type</th>
+      <th>Owner</th><th>Vendor</th><th>Description</th><th>Amount</th><th>Fee Type</th>
       <th>Payment Date</th><th>Behalf Of</th><th>Status</th><th>Submitted By</th><th>Actions</th>
     </tr></thead>
     <tbody>${requests.map(r => {
       const v = STATE.vendors.find(x => x.id === r.vendorId);
+      const owner = STATE.users.find(u => u.email === (r.owner || r.submittedBy));
       return `<tr>
+        <td><strong>${escapeHtml(owner ? owner.name : (r.owner || r.submittedBy))}</strong></td>
         <td><strong>${escapeHtml(v ? v.name : '—')}</strong></td>
         <td class="desc-cell">${escapeHtml(r.description || '—')}</td>
         <td><strong>${formatCurrency(r.amount)}</strong></td>
@@ -815,6 +1179,13 @@ function openRequestForm(id) {
         <label>Description of Work *</label>
         <textarea id="rDescription" rows="3" required>${req ? escapeHtml(req.description) : ''}</textarea>
       </div>
+      <div class="field-group">
+        <label>Owner</label>
+        <select id="rOwner">
+          ${STATE.users.filter(u => u.active).map(u => `<option value="${u.email}" ${(req && req.owner === u.email) || (!req && u.email === STATE.currentUser.email) ? 'selected' : ''}>${escapeHtml(u.name || u.email)}</option>`).join('')}
+        </select>
+        <div class="field-hint">Default owner is you. Change to assign this matter to another team member.</div>
+      </div>
       <div class="form-row">
         <div class="field-group">
           <label>Fee Type *</label>
@@ -866,18 +1237,22 @@ function openRequestForm(id) {
     const feeType = document.getElementById('rFeeType').value;
     const paymentDate = document.getElementById('rPaymentDate').value;
     const budgetSource = document.getElementById('rBudgetSource').value;
+    const owner = document.getElementById('rOwner')?.value || STATE.currentUser.email;
+    const paymentDate = document.getElementById('rPaymentDate').value;
+    const budgetSource = document.getElementById('rBudgetSource').value;
     const onBehalf = budgetSource === 'behalf';
     const behalfName = onBehalf ? document.getElementById('rBehalfName').value.trim() : '';
     const behalfDetails = onBehalf ? document.getElementById('rBehalfDetails').value.trim() : '';
 
     if (req) {
-      Object.assign(req, { vendorId, amount, currency: inputCurrency, description, feeType, paymentDate, budgetSource, onBehalf, behalfName, behalfDetails, updatedAt: new Date().toISOString() });
+      Object.assign(req, { vendorId, amount, currency: inputCurrency, description, feeType, paymentDate, budgetSource, onBehalf, behalfName, behalfDetails, owner, updatedAt: new Date().toISOString() });
     } else {
       const newReq = {
         id: genId(), vendorId, amount, currency: inputCurrency, description, feeType, paymentDate, budgetSource, onBehalf,
         behalfName, behalfDetails, status: 'pending', submittedBy: STATE.currentUser.email,
         submittedAt: new Date().toISOString(), updatedAt: new Date().toISOString()
       };
+      if (owner && owner !== STATE.currentUser.email) newReq.owner = owner;
       STATE.budgetRequests.push(newReq);
       // Notify GC
       const gc = STATE.users.find(u => u.role === 'gc');
@@ -906,6 +1281,7 @@ function viewRequest(id) {
       <button class="modal-close" onclick="closeModal('requestModal')">✕</button>
     </div>
     <div class="detail-grid">
+      <div class="detail-row"><label>Owner</label><span>${escapeHtml(req.owner ? (STATE.users.find(u=>u.email===req.owner)?.name || req.owner) : (STATE.currentUser.name || req.submittedBy))}</span></div>
       <div class="detail-row"><label>Vendor</label><span>${escapeHtml(v ? v.name : '—')}</span></div>
       <div class="detail-row"><label>Amount</label><span><strong>${formatCurrency(req.amount)}</strong></span></div>
       <div class="detail-row full"><label>Description</label><span>${escapeHtml(req.description)}</span></div>
@@ -1011,10 +1387,13 @@ function renderExpenseList(expenses) {
   }
   el.innerHTML = `<table class="data-table">
     <thead><tr>
-      <th>Category</th><th>Description</th><th>Amount</th><th>Fee Type</th>
+      <th>Owner</th><th>Category</th><th>Description</th><th>Amount</th><th>Fee Type</th>
       <th>Payment Date</th><th>Status</th><th>Submitted By</th><th>Actions</th>
     </tr></thead>
-    <tbody>${expenses.map(e => `<tr>
+    <tbody>${expenses.map(e => {
+      const owner = STATE.users.find(u => u.email === (e.owner || e.submittedBy));
+      return `<tr>
+      <td><strong>${escapeHtml(owner ? owner.name : (e.owner || e.submittedBy))}</strong></td>
       <td><span class="tag tag-cat">${escapeHtml(e.category)}</span></td>
       <td class="desc-cell">${escapeHtml(e.description)}</td>
       <td><strong>${formatCurrency(e.amount)}</strong></td>
@@ -1068,6 +1447,12 @@ function openExpenseForm(id) {
         <label>Description *</label>
         <textarea id="eDescription" rows="3" required>${exp ? escapeHtml(exp.description) : ''}</textarea>
       </div>
+      <div class="field-group">
+        <label>Owner</label>
+        <select id="eOwner">
+          ${STATE.users.filter(u => u.active).map(u => `<option value="${u.email}" ${(exp && exp.owner === u.email) || (!exp && u.email === STATE.currentUser.email) ? 'selected' : ''}>${escapeHtml(u.name || u.email)}</option>`).join('')}
+        </select>
+      </div>
       <div class="form-row">
         <div class="field-group">
           <label>Fee Type *</label>
@@ -1097,14 +1482,17 @@ function openExpenseForm(id) {
     const description = document.getElementById('eDescription').value.trim();
     const feeType = document.getElementById('eFeeType').value;
     const paymentDate = document.getElementById('ePaymentDate').value;
+    const owner = document.getElementById('eOwner')?.value || STATE.currentUser.email;
 
     if (exp) {
-      Object.assign(exp, { category, amount, currency: inputCurrency, description, feeType, paymentDate, updatedAt: new Date().toISOString() });
+      Object.assign(exp, { category, amount, currency: inputCurrency, description, feeType, paymentDate, owner, updatedAt: new Date().toISOString() });
     } else {
       STATE.expenses.push({
         id: genId(), category, amount, currency: inputCurrency, description, feeType, paymentDate,
         status: 'pending', submittedBy: STATE.currentUser.email, submittedAt: new Date().toISOString()
       });
+      const lastExp = STATE.expenses[STATE.expenses.length - 1];
+      if (owner && owner !== STATE.currentUser.email) lastExp.owner = owner;
       const gc = STATE.users.find(u => u.role === 'gc');
       if (gc) sendEmail(gc.email, 'New Expense Submitted',
         `A new department expense has been submitted by ${STATE.currentUser.name || STATE.currentUser.email}.\n\nCategory: ${category}\nAmount: ${formatCurrency(amount)}\nDescription: ${description}`);
@@ -1246,9 +1634,28 @@ function openVendorForm(id) {
   let localContacts = [...contacts];
 
   function rebind() {
+    // Preserve any unsaved input by reading from DOM before re-rendering
+    const existingRows = document.querySelectorAll('.contact-row');
+    if (existingRows.length > 0) {
+      localContacts = Array.from(existingRows).map(row => ({
+        name: row.querySelector('.contact-name')?.value?.trim() || '',
+        email: row.querySelector('.contact-email')?.value?.trim() || ''
+      }));
+      // Ensure at least one empty row exists
+      if (localContacts.length === 0) localContacts.push({ name: '', email: '' });
+    }
     document.getElementById('contactRows').innerHTML = renderContactRows(localContacts);
     document.querySelectorAll('.remove-contact').forEach(btn => {
       btn.addEventListener('click', () => {
+        localContacts.splice(parseInt(btn.dataset.i), 1);
+        // Re-read DOM before rebinding
+        const rows = document.querySelectorAll('.contact-row');
+        if (rows.length > 0) {
+          localContacts = Array.from(rows).map(r => ({
+            name: r.querySelector('.contact-name')?.value || '',
+            email: r.querySelector('.contact-email')?.value || ''
+          }));
+        }
         localContacts.splice(parseInt(btn.dataset.i), 1);
         rebind();
       });
