@@ -317,6 +317,12 @@ html, body {
   gap: 8px;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
 /* ── Main Content ───────────────────────────────────────── */
 .main-content {
   flex: 1;
@@ -949,7 +955,233 @@ html, body {
   transform: translateX(-50%) translateY(0);
 }
 
-/* ── Responsive ─────────────────────────────────────────── */
+/* ── Currency Display ───────────────────────────────────── */
+.currency-display {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.currency-display label {
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.currency-select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  outline: none;
+  min-width: 90px;
+}
+
+.currency-select:focus {
+  border-color: var(--navy-400);
+  box-shadow: 0 0 0 3px rgba(38,79,130,.08);
+}
+
+.rate-updated {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rate-updated.warn {
+  color: var(--orange);
+  font-weight: 600;
+}
+
+/* ── Amount Input with Currency ─────────────────────────── */
+.amount-input-row {
+  display: flex;
+  gap: 0;
+  align-items: stretch;
+}
+
+.currency-input-select {
+  padding: 9px 8px;
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--navy-50);
+  color: var(--navy-700);
+  cursor: pointer;
+  outline: none;
+  min-width: 85px;
+  flex-shrink: 0;
+}
+
+.currency-input-select:focus {
+  border-color: var(--navy-400);
+  box-shadow: -3px 0 0 3px rgba(38,79,130,.08);
+}
+
+.amount-input-row input[type="number"] {
+  flex: 1;
+  min-width: 120px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.amount-input-row input[type="number"]:focus {
+  border-color: var(--navy-400);
+  box-shadow: 3px 0 0 3px rgba(38,79,130,.08);
+}
+
+/* ── Budget Utilization Bar ─────────────────────────────── */
+.budget-util-bar {
+  padding: 8px 0;
+}
+
+.budget-util-track {
+  height: 32px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  position: relative;
+}
+
+.budget-util-fill {
+  height: 100%;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 10px;
+  transition: width 0.6s ease;
+  min-width: fit-content;
+}
+
+.budget-util-fill.good  { background: linear-gradient(90deg, var(--navy-500), var(--navy-400)); }
+.budget-util-fill.warn  { background: linear-gradient(90deg, var(--gold-400), var(--orange)); }
+.budget-util-fill.danger { background: linear-gradient(90deg, var(--orange), var(--red)); }
+
+.budget-util-label {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0,0,0,.3);
+  white-space: nowrap;
+}
+
+.budget-util-marks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Budget Configuration Page ──────────────────────────── */
+.budget-config-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.total-budget-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+
+.big-input {
+  padding: 14px 18px !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  color: var(--navy-800) !important;
+  letter-spacing: 0.5px;
+}
+
+.total-budget-stats {
+  display: flex;
+  gap: 32px;
+  align-items: flex-end;
+}
+
+.tbs-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.tbs-val {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--navy-800);
+}
+
+.tbs-val.over  { color: var(--red); }
+.tbs-val.under { color: var(--green); }
+
+.tbs-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.subcat-table-wrap {
+  overflow-x: auto;
+}
+
+.subcat-alloc-input {
+  width: 140px;
+  padding: 8px 12px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: 13.5px !important;
+  font-weight: 600 !important;
+  text-align: right;
+  background: var(--surface);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.subcat-alloc-input:focus {
+  border-color: var(--navy-400) !important;
+  box-shadow: 0 0 0 3px rgba(38,79,130,.08) !important;
+}
+
+.subcat-bar-wrap {
+  min-width: 150px;
+}
+
+.subcat-bar-track {
+  height: 10px;
+  background: var(--bg);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.subcat-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--navy-500), var(--gold-400));
+  border-radius: 5px;
+  transition: width 0.4s ease;
+}
+
+.total-row td {
+  border-top: 2px solid var(--border) !important;
+  font-size: 14px;
+  background: var(--navy-50) !important;
+}
+
+.allocation-chart {
+  padding: 10px 0;
+}
+
+/* ── Responsive ───────────────────────────────────────── */
 @media (max-width: 1024px) {
   .dashboard-grid { grid-template-columns: repeat(2, 1fr); }
 }

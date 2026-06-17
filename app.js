@@ -5,14 +5,55 @@
 
 // ── Initial Data ────────────────────────────────────────────
 
+const BACKOFFICE_SUBCATEGORIES = [
+  { id: 'gc-office', name: 'General Counsel Office' },
+  { id: 'litigation', name: 'Litigation & Disputes' },
+  { id: 'corporate', name: 'Corporate & Transactions' },
+  { id: 'contracts', name: 'Contracts & Commercial' },
+  { id: 'ip', name: 'Intellectual Property' },
+  { id: 'compliance', name: 'Compliance & Regulatory' },
+  { id: 'employment', name: 'Employment & Labor' },
+  { id: 'privacy', name: 'Data Privacy & Security' },
+  { id: 'reserve', name: 'Reserve / Contingency' }
+];
+
+const SUPPORTED_CURRENCIES = [
+  { code: 'USD', symbol: '$', name: 'US Dollar' },
+  { code: 'CNY', symbol: '¥', name: 'Chinese Yuan' },
+  { code: 'EUR', symbol: '€', name: 'Euro' },
+  { code: 'GBP', symbol: '£', name: 'British Pound' },
+  { code: 'JPY', symbol: '¥', name: 'Japanese Yen' },
+  { code: 'HKD', symbol: 'HK$', name: 'Hong Kong Dollar' },
+  { code: 'SGD', symbol: 'S$', name: 'Singapore Dollar' },
+  { code: 'CHF', symbol: 'CHF', name: 'Swiss Franc' },
+  { code: 'AUD', symbol: 'A$', name: 'Australian Dollar' },
+  { code: 'CAD', symbol: 'C$', name: 'Canadian Dollar' },
+  { code: 'KRW', symbol: '₩', name: 'Korean Won' },
+  { code: 'INR', symbol: '₹', name: 'Indian Rupee' }
+];
+
+const EXCHANGE_API = 'https://open.er-api.com/v6/latest/USD';
+
 const INITIAL_STATE = {
   currentUser: null,
+  displayCurrency: 'USD',
+  exchangeRates: {},
+  lastRateFetch: null,
+  budgetConfig: {
+    totalBudget: 1223200,
+    subcategoryAllocations: BACKOFFICE_SUBCATEGORIES.reduce((acc, cat, i) => {
+      // Distribute default budget proportionally (approximate)
+      const portions = [0.18, 0.20, 0.14, 0.12, 0.10, 0.10, 0.06, 0.05, 0.05];
+      acc[cat.id] = Math.round(1223200 * portions[i]);
+      return acc;
+    }, {})
+  },
   users: [
     {
       id: 'u1',
       email: 'tao.guan@dragonpass.com',
       name: 'Tao Guan',
-      role: 'gc', // general counsel
+      role: 'gc',
       password: 'Admin@2026',
       active: true
     }
@@ -42,9 +83,65 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-function formatCurrency(n) {
+function getRate(from, to) {
+  if (from === to) return 1;
+  if (!STATE.exchangeRates || !STATE.exchangeRates.rates) return 1;
+  // API returns rates relative to USD
+  if (from === 'USD') return STATE.exchangeRates.rates[to] || 1;
+  if (to === 'USD') return 1 / (STATE.exchangeRates.rates[from] || 1);
+  const fromUSD = STATE.exchangeRates.rates[from] || 1;
+  const toUSD = STATE.exchangeRates.rates[to] || 1;
+  return toUSD / fromUSD;
+}
+
+function convertAmount(amountUSD, targetCurrency) {
+  if (targetCurrency === 'USD') return amountUSD;
+  return amountUSD * getRate('USD', targetCurrency);
+}
+
+function toUSD(amount, fromCurrency) {
+  if (fromCurrency === 'USD') return Number(amount);
+  return Number(amount) / getRate('USD', fromCurrency);
+}
+
+function formatCurrency(n, forceCurrency) {
   if (n === null || n === undefined || n === '') return '—';
-  return '¥' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const currency = forceCurrency || STATE.displayCurrency || 'USD';
+  const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency) || SUPPORTED_CURRENCIES[0];
+  const converted = convertAmount(Number(n), currency);
+  const decimals = ['JPY', 'KRW', 'INR'].includes(currency) ? 0 : 2;
+  return curr.symbol + ' ' + Number(converted).toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
+}
+
+async function fetchExchangeRates() {
+  try {
+    const resp = await fetch(EXCHANGE_API);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && data.result === 'success' && data.rates) {
+      STATE.exchangeRates = data;
+      STATE.lastRateFetch = new Date().toISOString();
+      saveState();
+      // Refresh UI if logged in
+      if (STATE.currentUser) {
+        renderMain();
+        // Also update currency display in topbar
+        const displayEl = document.getElementById('displayCurrencySelector');
+        if (displayEl) displayEl.value = STATE.displayCurrency || 'USD';
+      }
+    }
+  } catch (e) {
+    console.warn('Exchange rate fetch failed:', e.message);
+  }
+}
+
+function setDisplayCurrency(code) {
+  STATE.displayCurrency = code;
+  saveState();
+  renderMain();
 }
 
 function formatDate(d) {
@@ -181,6 +278,7 @@ function attachLoginHandlers() {
 function renderShell() {
   const u = STATE.currentUser;
   const gcNav = isGC() ? `
+    <div class="nav-item" data-page="budget-config"><span class="nav-icon">⚙️</span> Budget Configuration</div>
     <div class="nav-item" data-page="users"><span class="nav-icon">👥</span> User Management</div>
     <div class="nav-item" data-page="notifications"><span class="nav-icon">🔔</span> Notifications <span class="badge">${STATE.notifications.filter(n=>!n.read).length || ''}</span></div>
   ` : `
@@ -219,7 +317,16 @@ function renderShell() {
     <div class="main-wrap">
       <header class="topbar">
         <div class="topbar-title" id="topbarTitle">Dashboard</div>
-        <div class="topbar-actions" id="topbarActions"></div>
+        <div class="topbar-right">
+          <div class="currency-display">
+            <label>Display Currency</label>
+            <select id="displayCurrencySelector" class="currency-select">
+              ${SUPPORTED_CURRENCIES.map(c => `<option value="${c.code}" ${(STATE.displayCurrency||'USD')===c.code?'selected':''}>${c.symbol} ${c.code}</option>`).join('')}
+            </select>
+            ${STATE.lastRateFetch ? `<span class="rate-updated">Rates: ${new Date(STATE.lastRateFetch).toLocaleDateString()}</span>` : '<span class="rate-updated warn">Rates not loaded</span>'}
+          </div>
+          <div class="topbar-actions" id="topbarActions"></div>
+        </div>
       </header>
       <main class="main-content" id="mainContent"></main>
     </div>
@@ -231,6 +338,10 @@ function attachShellHandlers() {
     el.addEventListener('click', () => navigate(el.dataset.page));
   });
   document.getElementById('logoutBtn').addEventListener('click', logout);
+  const currSel = document.getElementById('displayCurrencySelector');
+  if (currSel) {
+    currSel.addEventListener('change', e => setDisplayCurrency(e.target.value));
+  }
 }
 
 // ── Main Render Dispatcher ────────────────────────────────────
@@ -241,6 +352,7 @@ function renderMain() {
     'budget-requests': 'Budget Requests',
     expenses: 'Department Expenses',
     vendors: 'Vendor Registry',
+    'budget-config': 'Budget Configuration',
     users: 'User Management',
     notifications: 'Notifications'
   };
@@ -253,9 +365,175 @@ function renderMain() {
     case 'budget-requests': renderBudgetRequests(content, actions); break;
     case 'expenses':        renderExpenses(content, actions); break;
     case 'vendors':         renderVendors(content, actions); break;
+    case 'budget-config':   renderBudgetConfig(content, actions); break;
     case 'users':           renderUsers(content, actions); break;
     case 'notifications':   renderNotifications(content, actions); break;
     default:                content.innerHTML = '<p>Page not found.</p>';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BUDGET CONFIGURATION (GC only)
+// ═══════════════════════════════════════════════════════════════
+
+function renderBudgetConfig(content, actions) {
+  if (!isGC()) { content.innerHTML = '<p>Access denied.</p>'; return; }
+  actions.innerHTML = `<button class="btn btn-primary" id="saveBudgetBtn">💾 Save Configuration</button>`;
+
+  const cfg = STATE.budgetConfig;
+  const totalAllocated = Object.values(cfg.subcategoryAllocations).reduce((a, b) => a + b, 0);
+  const diff = cfg.totalBudget - totalAllocated;
+
+  content.innerHTML = `
+  <div class="budget-config-grid">
+    <div class="dash-card full">
+      <div class="dash-card-title">Total Department Budget</div>
+      <div class="total-budget-row">
+        <div class="field-group" style="max-width:300px">
+          <label>Total Budget (USD)</label>
+          <input type="number" id="cfgTotalBudget" value="${cfg.totalBudget}" min="0" step="100" class="big-input" />
+        </div>
+        <div class="total-budget-stats">
+          <div class="tbs-item">
+            <span class="tbs-val" id="cfgTotalDisplay">${formatCurrency(cfg.totalBudget)}</span>
+            <span class="tbs-label">Total Budget</span>
+          </div>
+          <div class="tbs-item">
+            <span class="tbs-val" id="cfgAllocatedDisplay">${formatCurrency(totalAllocated)}</span>
+            <span class="tbs-label">Allocated</span>
+          </div>
+          <div class="tbs-item">
+            <span class="tbs-val ${diff < 0 ? 'over' : 'under'}" id="cfgDiffDisplay">${diff < 0 ? '-' : ''}${formatCurrency(Math.abs(diff))}</span>
+            <span class="tbs-label">${diff >= 0 ? 'Unallocated' : 'Over-allocated'}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-card full">
+      <div class="dash-card-title">Backoffice Subcategory Allocations</div>
+      <div class="subcat-table-wrap">
+        <table class="data-table" id="subcatTable">
+          <thead><tr>
+            <th>Subcategory</th>
+            <th>Allocation (USD)</th>
+            <th>% of Total</th>
+            <th>Allocation</th>
+          </tr></thead>
+          <tbody>
+            ${BACKOFFICE_SUBCATEGORIES.map(cat => {
+              const alloc = cfg.subcategoryAllocations[cat.id] || 0;
+              const pct = cfg.totalBudget ? ((alloc / cfg.totalBudget) * 100).toFixed(1) : '0.0';
+              return `<tr>
+                <td><strong>${escapeHtml(cat.name)}</strong></td>
+                <td><input type="number" class="subcat-alloc-input" data-cat="${cat.id}" value="${alloc}" min="0" step="100" /></td>
+                <td><span class="subcat-pct" data-cat="${cat.id}">${pct}%</span></td>
+                <td>
+                  <div class="subcat-bar-wrap">
+                    <div class="subcat-bar-track">
+                      <div class="subcat-bar-fill" data-cat="${cat.id}" style="width:${pct}%"></div>
+                    </div>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td><strong>Total</strong></td>
+              <td><strong id="subcatTotal">${formatCurrency(totalAllocated)}</strong></td>
+              <td><strong id="subcatTotalPct">${cfg.totalBudget ? ((totalAllocated / cfg.totalBudget) * 100).toFixed(1) : '0.0'}%</strong></td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
+    <div class="dash-card full">
+      <div class="dash-card-title">Budget Allocation Overview</div>
+      <div class="allocation-chart" id="allocationChart"></div>
+    </div>
+  </div>`;
+
+  // Render allocation visualization
+  renderAllocationChart();
+
+  // Live update on input changes
+  function updateTotals() {
+    const totalBudget = parseFloat(document.getElementById('cfgTotalBudget').value) || 0;
+    let subTotal = 0;
+    document.querySelectorAll('.subcat-alloc-input').forEach(input => {
+      subTotal += parseFloat(input.value) || 0;
+    });
+    const diff = totalBudget - subTotal;
+    document.getElementById('cfgTotalDisplay').textContent = formatCurrency(totalBudget);
+    document.getElementById('cfgAllocatedDisplay').textContent = formatCurrency(subTotal);
+    const diffEl = document.getElementById('cfgDiffDisplay');
+    diffEl.textContent = (diff < 0 ? '-' : '') + formatCurrency(Math.abs(diff));
+    diffEl.className = 'tbs-val ' + (diff < 0 ? 'over' : 'under');
+    document.getElementById('subcatTotal').textContent = formatCurrency(subTotal);
+    document.getElementById('subcatTotalPct').textContent = totalBudget ? ((subTotal / totalBudget) * 100).toFixed(1) + '%' : '0.0%';
+    // Update percentages and bars
+    document.querySelectorAll('.subcat-alloc-input').forEach(input => {
+      const cat = input.dataset.cat;
+      const val = parseFloat(input.value) || 0;
+      const pct = totalBudget ? ((val / totalBudget) * 100).toFixed(1) : '0.0';
+      const pctEl = document.querySelector(`.subcat-pct[data-cat="${cat}"]`);
+      const barEl = document.querySelector(`.subcat-bar-fill[data-cat="${cat}"]`);
+      if (pctEl) pctEl.textContent = pct + '%';
+      if (barEl) barEl.style.width = pct + '%';
+    });
+    renderAllocationChart();
+  }
+
+  document.getElementById('cfgTotalBudget').addEventListener('input', updateTotals);
+  document.querySelectorAll('.subcat-alloc-input').forEach(input => {
+    input.addEventListener('input', updateTotals);
+  });
+
+  document.getElementById('saveBudgetBtn').addEventListener('click', () => {
+    const totalBudget = parseFloat(document.getElementById('cfgTotalBudget').value) || 0;
+    const allocations = {};
+    document.querySelectorAll('.subcat-alloc-input').forEach(input => {
+      allocations[input.dataset.cat] = parseFloat(input.value) || 0;
+    });
+    STATE.budgetConfig = { totalBudget, subcategoryAllocations: allocations };
+    saveState();
+    showToast('Budget configuration saved successfully.');
+  });
+
+  function renderAllocationChart() {
+    const chart = document.getElementById('allocationChart');
+    if (!chart) return;
+    const totalBudget = parseFloat(document.getElementById('cfgTotalBudget').value) || 1223200;
+    const subTotal = Array.from(document.querySelectorAll('.subcat-alloc-input')).reduce((s, inp) => s + (parseFloat(inp.value) || 0), 0);
+    const unallocated = Math.max(0, totalBudget - subTotal);
+
+    const colors = ['#1d3a64', '#264f82', '#3a6bb0', '#5b8dd4', '#8db5ed', '#c5d9f6', '#d4aa3c', '#e2bd52', '#f0d478'];
+    let segments = BACKOFFICE_SUBCATEGORIES.map((cat, i) => {
+      const val = parseFloat(document.querySelector(`.subcat-alloc-input[data-cat="${cat.id}"]`)?.value) || 0;
+      return { name: cat.name, value: val, color: colors[i], catId: cat.id };
+    });
+    if (unallocated > 0.01) {
+      segments.push({ name: 'Unallocated', value: unallocated, color: '#e5e7eb', catId: 'unallocated' });
+    }
+
+    const maxVal = Math.max(totalBudget, subTotal);
+    const barHeight = 36;
+    const totalH = segments.length * (barHeight + 8) + 20;
+
+    chart.innerHTML = `
+    <svg viewBox="0 0 620 ${totalH}" style="width:100%; height:auto; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+      ${segments.map((seg, i) => {
+        const y = 10 + i * (barHeight + 8);
+        const w = maxVal ? Math.max((seg.value / maxVal) * 400, 2) : 2;
+        return `
+        <text x="0" y="${y + 20}" font-size="12" fill="#374151" font-weight="500">${escapeHtml(seg.name)}</text>
+        <rect x="200" y="${y + 6}" width="${w}" height="${barHeight - 12}" rx="4" fill="${seg.color}" />
+        <text x="${205 + w}" y="${y + 20}" font-size="12" fill="#6b7280">${formatCurrency(seg.value)} (${maxVal ? ((seg.value / maxVal) * 100).toFixed(1) : 0}%)</text>`;
+      }).join('')}
+    </svg>`;
   }
 }
 
@@ -269,12 +547,19 @@ function renderDashboard(content, actions) {
   const requests = STATE.budgetRequests;
   const expenses = STATE.expenses;
   const vendors = STATE.vendors;
+  const cfg = STATE.budgetConfig || { totalBudget: 1223200, subcategoryAllocations: {} };
 
   const totalVendorBudget = requests.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
   const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  const totalSpent = totalVendorBudget + totalExpenses;
   const pendingApprovals = [...requests, ...expenses, ...vendors.filter(v=>v.status==='pending')].filter(x => x.status === 'pending').length;
   const approvedRequests = requests.filter(r => r.status === 'approved').length;
   const rejectedRequests = requests.filter(r => r.status === 'rejected').length;
+
+  // Budget utilization
+  const budgetUsed = totalSpent;
+  const budgetPct = cfg.totalBudget ? Math.round((budgetUsed / cfg.totalBudget) * 100) : 0;
+  const budgetRemaining = Math.max(0, cfg.totalBudget - budgetUsed);
 
   // Budget by category (expenses)
   const expByCategory = {};
@@ -299,14 +584,14 @@ function renderDashboard(content, actions) {
   content.innerHTML = `
   <div class="dashboard-grid">
     <div class="stat-card accent-blue">
-      <div class="stat-label">Total Vendor Budget</div>
-      <div class="stat-value">${formatCurrency(totalVendorBudget)}</div>
-      <div class="stat-sub">${requests.length} requests</div>
+      <div class="stat-label">Budget Utilization</div>
+      <div class="stat-value">${budgetPct}%</div>
+      <div class="stat-sub">${formatCurrency(budgetUsed)} of ${formatCurrency(cfg.totalBudget)}</div>
     </div>
     <div class="stat-card accent-gold">
-      <div class="stat-label">Dept. Expenses</div>
-      <div class="stat-value">${formatCurrency(totalExpenses)}</div>
-      <div class="stat-sub">${expenses.length} entries</div>
+      <div class="stat-label">Budget Remaining</div>
+      <div class="stat-value">${formatCurrency(budgetRemaining)}</div>
+      <div class="stat-sub">${cfg.totalBudget ? ((budgetRemaining / cfg.totalBudget) * 100).toFixed(1) : 0}% of total</div>
     </div>
     <div class="stat-card accent-orange">
       <div class="stat-label">Pending Approvals</div>
@@ -314,9 +599,29 @@ function renderDashboard(content, actions) {
       <div class="stat-sub">Awaiting your review</div>
     </div>
     <div class="stat-card accent-green">
-      <div class="stat-label">Approved</div>
-      <div class="stat-value">${approvedRequests}</div>
-      <div class="stat-sub">${rejectedRequests} rejected</div>
+      <div class="stat-label">Approved / Rejected</div>
+      <div class="stat-value">${approvedRequests} / ${rejectedRequests}</div>
+      <div class="stat-sub">${requests.length} total requests</div>
+    </div>
+  </div>
+
+  <div class="dashboard-row">
+    <div class="dash-card full">
+      <div class="dash-card-title">Budget Utilization Bar</div>
+      <div class="budget-util-bar">
+        <div class="budget-util-track">
+          <div class="budget-util-fill ${budgetPct > 90 ? 'danger' : budgetPct > 70 ? 'warn' : 'good'}" style="width:${Math.min(budgetPct, 100)}%">
+            <span class="budget-util-label">${budgetPct}%</span>
+          </div>
+        </div>
+        <div class="budget-util-marks">
+          <span>${formatCurrency(0)}</span>
+          <span>${formatCurrency(cfg.totalBudget * 0.25)}</span>
+          <span>${formatCurrency(cfg.totalBudget * 0.5)}</span>
+          <span>${formatCurrency(cfg.totalBudget * 0.75)}</span>
+          <span>${formatCurrency(cfg.totalBudget)}</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -497,8 +802,13 @@ function openRequestForm(id) {
           <div style="margin-top:6px"><button type="button" class="btn-link" onclick="closeModal('requestModal');navigate('vendors')">+ Add New Vendor</button></div>
         </div>
         <div class="field-group">
-          <label>Amount (¥) *</label>
-          <input type="number" id="rAmount" min="0" step="0.01" value="${req ? req.amount : ''}" required />
+          <label>Amount *</label>
+          <div class="amount-input-row">
+            <select id="rCurrency" class="currency-input-select">
+              ${SUPPORTED_CURRENCIES.map(c => `<option value="${c.code}" ${(req && req.currency===c.code) || (!req && c.code==='USD') ? 'selected' : ''}>${c.symbol} ${c.code}</option>`).join('')}
+            </select>
+            <input type="number" id="rAmount" min="0" step="0.01" value="${req ? req.amount : ''}" required />
+          </div>
         </div>
       </div>
       <div class="field-group">
@@ -549,7 +859,9 @@ function openRequestForm(id) {
   document.getElementById('requestForm').addEventListener('submit', e => {
     e.preventDefault();
     const vendorId = document.getElementById('rVendorId').value;
-    const amount = document.getElementById('rAmount').value;
+    const inputCurrency = document.getElementById('rCurrency').value;
+    const rawAmount = parseFloat(document.getElementById('rAmount').value) || 0;
+    const amount = toUSD(rawAmount, inputCurrency);
     const description = document.getElementById('rDescription').value.trim();
     const feeType = document.getElementById('rFeeType').value;
     const paymentDate = document.getElementById('rPaymentDate').value;
@@ -559,10 +871,10 @@ function openRequestForm(id) {
     const behalfDetails = onBehalf ? document.getElementById('rBehalfDetails').value.trim() : '';
 
     if (req) {
-      Object.assign(req, { vendorId, amount, description, feeType, paymentDate, budgetSource, onBehalf, behalfName, behalfDetails, updatedAt: new Date().toISOString() });
+      Object.assign(req, { vendorId, amount, currency: inputCurrency, description, feeType, paymentDate, budgetSource, onBehalf, behalfName, behalfDetails, updatedAt: new Date().toISOString() });
     } else {
       const newReq = {
-        id: genId(), vendorId, amount, description, feeType, paymentDate, budgetSource, onBehalf,
+        id: genId(), vendorId, amount, currency: inputCurrency, description, feeType, paymentDate, budgetSource, onBehalf,
         behalfName, behalfDetails, status: 'pending', submittedBy: STATE.currentUser.email,
         submittedAt: new Date().toISOString(), updatedAt: new Date().toISOString()
       };
@@ -743,8 +1055,13 @@ function openExpenseForm(id) {
           </select>
         </div>
         <div class="field-group">
-          <label>Amount (¥) *</label>
-          <input type="number" id="eAmount" min="0" step="0.01" value="${exp ? exp.amount : ''}" required />
+          <label>Amount *</label>
+          <div class="amount-input-row">
+            <select id="eCurrency" class="currency-input-select">
+              ${SUPPORTED_CURRENCIES.map(c => `<option value="${c.code}" ${(exp && exp.currency===c.code) || (!exp && c.code==='USD') ? 'selected' : ''}>${c.symbol} ${c.code}</option>`).join('')}
+            </select>
+            <input type="number" id="eAmount" min="0" step="0.01" value="${exp ? exp.amount : ''}" required />
+          </div>
         </div>
       </div>
       <div class="field-group">
@@ -774,16 +1091,18 @@ function openExpenseForm(id) {
   document.getElementById('expenseForm').addEventListener('submit', ev => {
     ev.preventDefault();
     const category = document.getElementById('eCategory').value;
-    const amount = document.getElementById('eAmount').value;
+    const inputCurrency = document.getElementById('eCurrency').value;
+    const rawAmount = parseFloat(document.getElementById('eAmount').value) || 0;
+    const amount = toUSD(rawAmount, inputCurrency);
     const description = document.getElementById('eDescription').value.trim();
     const feeType = document.getElementById('eFeeType').value;
     const paymentDate = document.getElementById('ePaymentDate').value;
 
     if (exp) {
-      Object.assign(exp, { category, amount, description, feeType, paymentDate, updatedAt: new Date().toISOString() });
+      Object.assign(exp, { category, amount, currency: inputCurrency, description, feeType, paymentDate, updatedAt: new Date().toISOString() });
     } else {
       STATE.expenses.push({
-        id: genId(), category, amount, description, feeType, paymentDate,
+        id: genId(), category, amount, currency: inputCurrency, description, feeType, paymentDate,
         status: 'pending', submittedBy: STATE.currentUser.email, submittedAt: new Date().toISOString()
       });
       const gc = STATE.users.find(u => u.role === 'gc');
@@ -1165,4 +1484,12 @@ function showToast(msg) {
 }
 
 // ── Boot ──────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', renderApp);
+document.addEventListener('DOMContentLoaded', () => {
+  renderApp();
+  // Fetch exchange rates if never fetched or older than 24h
+  const lastFetch = STATE.lastRateFetch;
+  const shouldFetch = !lastFetch || (Date.now() - new Date(lastFetch).getTime()) > 24 * 60 * 60 * 1000;
+  if (shouldFetch) {
+    fetchExchangeRates();
+  }
+});
