@@ -1238,8 +1238,6 @@ function openRequestForm(id) {
     const paymentDate = document.getElementById('rPaymentDate').value;
     const budgetSource = document.getElementById('rBudgetSource').value;
     const owner = document.getElementById('rOwner')?.value || STATE.currentUser.email;
-    const paymentDate = document.getElementById('rPaymentDate').value;
-    const budgetSource = document.getElementById('rBudgetSource').value;
     const onBehalf = budgetSource === 'behalf';
     const behalfName = onBehalf ? document.getElementById('rBehalfName').value.trim() : '';
     const behalfDetails = onBehalf ? document.getElementById('rBehalfDetails').value.trim() : '';
