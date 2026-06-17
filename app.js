@@ -1408,7 +1408,7 @@ function renderExpenseList(expenses) {
         ${!isGC() && e.submittedBy === STATE.currentUser.email && e.status === 'pending' ?
           `<button class="btn-link edit" onclick="openExpenseForm('${e.id}')">Edit</button>` : ''}
       </td>
-    </tr>`).join('')}</tbody>
+    </tr>`}).join('')}</tbody>
   </table>`;
 }
 
