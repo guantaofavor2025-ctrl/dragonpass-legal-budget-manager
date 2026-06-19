@@ -437,6 +437,19 @@ html, body {
   overflow: hidden;
 }
 
+.stat-card.clickable,
+.dash-card.clickable {
+  cursor: pointer;
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+
+.stat-card.clickable:hover,
+.dash-card.clickable:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  transform: translateY(-2px);
+  border-color: var(--navy-300);
+}
+
 .stat-card::before {
   content: '';
   position: absolute;
