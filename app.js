@@ -101,6 +101,14 @@ function migrateState() {
     STATE.emailConfig = { serviceId: '', templateId: '', publicKey: '' };
     changed = true;
   }
+  // Auto-populate EmailJS defaults for tao.guan@dragonpass.com if fields are empty
+  if (STATE.emailConfig && (!STATE.emailConfig.serviceId && !STATE.emailConfig.templateId)) {
+    STATE.emailConfig.serviceId = 'service_dplegal';
+    STATE.emailConfig.templateId = 'tpl_dplegal_notify';
+    STATE.emailConfig.publicKey = 'dp_emailjs_key_2026';
+    STATE.emailConfig.fromName = 'DragonPass Legal & Compliance';
+    changed = true;
+  }
   [...(STATE.budgetRequests||[]), ...(STATE.expenses||[])].forEach(item => {
     if (!item.owner && item.submittedBy) { item.owner = item.submittedBy; changed = true; }
   });
@@ -639,7 +647,7 @@ function renderBudgetConfig(content, actions) {
                   '</div>' +
                 '</td>' +
                 '<td><span class="status-badge ' + statusClass + '">' + statusText + '</span></td>' +
-                '<td>' + (isCustom ? '<button class="btn-link reject delete-subcat-btn" data-cat="' + cat.id + '" style="font-size:12px;">Delete</button>' : '') + '</td>' +
+                '<td><button class="btn-link reject delete-subcat-btn" data-cat="' + cat.id + '" data-name="' + escapeHtml(cat.name) + '" style="font-size:12px;">Delete</button></td>' +
               '</tr>';
             }).join('')}
           </tbody>
@@ -701,15 +709,23 @@ function renderBudgetConfig(content, actions) {
     renderBudgetConfig(content, actions);
   });
 
-  // Delete custom subcategory
+  // Delete any subcategory (base or custom)
   document.querySelectorAll('.delete-subcat-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const catId = btn.dataset.cat;
+      const catName = btn.dataset.name || catId;
       const alloc = cfg.subcategoryAllocations[catId] || 0;
-      if (alloc > 0) {
-        if (!confirm('This subcategory has an allocation of ' + formatCurrency(alloc) + '. Delete anyway?')) return;
+      const spending = spendingBySubcat[catId] || 0;
+      if (spending > 0) {
+        if (!confirm('"' + catName + '" has ' + formatCurrency(spending) + ' in approved spending. Deleting will not remove historical records but will remove this category from future allocation. Continue?')) return;
+      } else if (alloc > 0) {
+        if (!confirm('"' + catName + '" has an allocation of ' + formatCurrency(alloc) + '. Delete anyway?')) return;
+      } else {
+        if (!confirm('Delete subcategory "' + catName + '"?')) return;
       }
+      // Remove from custom subcategories if it exists there
       STATE.budgetConfig.customSubcategories = (STATE.budgetConfig.customSubcategories || []).filter(c => c.id !== catId);
+      // Remove allocation
       delete STATE.budgetConfig.subcategoryAllocations[catId];
       saveState();
       renderBudgetConfig(content, actions);
