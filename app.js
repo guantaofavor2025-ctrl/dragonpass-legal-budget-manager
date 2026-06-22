@@ -72,7 +72,10 @@ let STATE = JSON.parse(localStorage.getItem('dp_budget_state') || 'null') || JSO
 function getSubcategories() {
   const custom = (STATE.budgetConfig && STATE.budgetConfig.customSubcategories) || [];
   const deleted = (STATE.budgetConfig && STATE.budgetConfig.deletedSubcategoryIds) || [];
-  return [...BACKOFFICE_SUBCATEGORIES, ...custom].filter(c => !deleted.includes(c.id));
+  const nameOverrides = (STATE.budgetConfig && STATE.budgetConfig.subcategoryNames) || {};
+  return [...BACKOFFICE_SUBCATEGORIES, ...custom]
+    .filter(c => !deleted.includes(c.id))
+    .map(c => nameOverrides[c.id] ? { ...c, name: nameOverrides[c.id] } : c);
 }
 
 // ── Migration: ensure all required fields exist ─────────────
@@ -100,6 +103,10 @@ function migrateState() {
   }
   if (!STATE.budgetConfig.deletedSubcategoryIds) {
     STATE.budgetConfig.deletedSubcategoryIds = [];
+    changed = true;
+  }
+  if (!STATE.budgetConfig.subcategoryNames) {
+    STATE.budgetConfig.subcategoryNames = {};
     changed = true;
   }
   if (!STATE.emailConfig) {
@@ -639,7 +646,7 @@ function renderBudgetConfig(content, actions) {
               const statusText = alloc > 0 && catSpending === 0 ? 'No spend yet' : (catSpending > alloc ? 'Over' : 'On track');
               const isCustom = (cfg.customSubcategories || []).some(c => c.id === cat.id);
               return '<tr>' +
-                '<td><strong>' + escapeHtml(cat.name) + '</strong></td>' +
+                '<td><input type="text" class="subcat-name-input" data-cat="' + cat.id + '" value="' + escapeHtml(cat.name) + '" style="font-weight:600;border:1px solid transparent;background:transparent;padding:4px 6px;border-radius:4px;width:100%;font-size:13px;" onmouseover="this.style.borderColor=\'var(--border)\'" onmouseout="if(document.activeElement!==this)this.style.borderColor=\'transparent\'" onfocus="this.style.borderColor=\'var(--navy-400)\'" onblur="this.style.borderColor=\'transparent\'" /></td>' +
                 '<td><input type="number" class="subcat-alloc-input" data-cat="' + cat.id + '" value="' + alloc + '" min="0" step="100" /></td>' +
                 '<td><span class="subcat-pct" data-cat="' + cat.id + '">' + pct + '%</span></td>' +
                 '<td><span class="subcat-spending" data-cat="' + cat.id + '">' + formatCurrency(catSpending) + '</span></td>' +
@@ -777,10 +784,21 @@ function renderBudgetConfig(content, actions) {
     document.querySelectorAll('.subcat-alloc-input').forEach(input => {
       allocations[input.dataset.cat] = parseFloat(input.value) || 0;
     });
+    // Save subcategory name overrides
+    const nameOverrides = {};
+    document.querySelectorAll('.subcat-name-input').forEach(input => {
+      const newName = input.value.trim();
+      if (newName) nameOverrides[input.dataset.cat] = newName;
+    });
+    // Persist renamed custom subcategory names directly in customSubcategories array
+    (STATE.budgetConfig.customSubcategories || []).forEach(c => {
+      if (nameOverrides[c.id]) c.name = nameOverrides[c.id];
+    });
     const notes = document.getElementById('cfgNotes')?.value?.trim() || '';
     const fiscalYear = document.getElementById('cfgFiscalYear')?.value?.trim() || 'FY 2025-2026';
     STATE.budgetConfig.totalBudget = totalBudget;
     STATE.budgetConfig.subcategoryAllocations = allocations;
+    STATE.budgetConfig.subcategoryNames = nameOverrides;
     STATE.budgetConfig.notes = notes;
     STATE.budgetConfig.fiscalYear = fiscalYear;
     STATE.budgetConfig.lastUpdated = new Date().toISOString();
