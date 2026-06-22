@@ -71,7 +71,8 @@ let STATE = JSON.parse(localStorage.getItem('dp_budget_state') || 'null') || JSO
 // ── getSubcategories: built-in + custom ─────────────────────
 function getSubcategories() {
   const custom = (STATE.budgetConfig && STATE.budgetConfig.customSubcategories) || [];
-  return [...BACKOFFICE_SUBCATEGORIES, ...custom];
+  const deleted = (STATE.budgetConfig && STATE.budgetConfig.deletedSubcategoryIds) || [];
+  return [...BACKOFFICE_SUBCATEGORIES, ...custom].filter(c => !deleted.includes(c.id));
 }
 
 // ── Migration: ensure all required fields exist ─────────────
@@ -95,6 +96,10 @@ function migrateState() {
   }
   if (!STATE.budgetConfig.customSubcategories) {
     STATE.budgetConfig.customSubcategories = [];
+    changed = true;
+  }
+  if (!STATE.budgetConfig.deletedSubcategoryIds) {
+    STATE.budgetConfig.deletedSubcategoryIds = [];
     changed = true;
   }
   if (!STATE.emailConfig) {
@@ -725,6 +730,14 @@ function renderBudgetConfig(content, actions) {
       }
       // Remove from custom subcategories if it exists there
       STATE.budgetConfig.customSubcategories = (STATE.budgetConfig.customSubcategories || []).filter(c => c.id !== catId);
+      // If it's a built-in subcategory, track it as deleted so it stays hidden
+      const isBuiltIn = BACKOFFICE_SUBCATEGORIES.some(c => c.id === catId);
+      if (isBuiltIn) {
+        if (!STATE.budgetConfig.deletedSubcategoryIds) STATE.budgetConfig.deletedSubcategoryIds = [];
+        if (!STATE.budgetConfig.deletedSubcategoryIds.includes(catId)) {
+          STATE.budgetConfig.deletedSubcategoryIds.push(catId);
+        }
+      }
       // Remove allocation
       delete STATE.budgetConfig.subcategoryAllocations[catId];
       saveState();
