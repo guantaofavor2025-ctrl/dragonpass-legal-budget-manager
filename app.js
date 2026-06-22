@@ -54,7 +54,7 @@ const INITIAL_STATE = {
       email: 'tao.guan@dragonpass.com',
       name: 'Tao Guan',
       role: 'gc',
-      password: 'Admin@2026',
+      password: 'tao.guan@admin',
       active: true
     }
   ],
