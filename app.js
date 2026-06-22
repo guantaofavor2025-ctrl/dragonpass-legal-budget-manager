@@ -1746,7 +1746,7 @@ function openVendorForm(id) {
       </div>
       <div class="field-group">
         <label>Key Contacts *</label>
-        <div id="contactRows">${renderContactRows(contacts)}</div>
+        <div id="contactRows"></div>
         <button type="button" class="btn btn-secondary btn-sm" id="addContactBtn">+ Add Contact</button>
       </div>
       <div class="field-group">
@@ -1768,47 +1768,46 @@ function openVendorForm(id) {
     </form>
   </div>`;
 
-  let localContacts = contacts.map(c => ({ name: c.name || '', email: c.email || '' }));
-
-  function rebind() {
-    // Read current DOM values BEFORE re-rendering
-    const existingRows = document.querySelectorAll('#contactRows .contact-row');
-    if (existingRows.length > 0) {
-      localContacts = Array.from(existingRows).map(row => ({
-        name: row.querySelector('.contact-name')?.value?.trim() || '',
-        email: row.querySelector('.contact-email')?.value?.trim() || ''
-      }));
-    }
-    if (localContacts.length === 0) localContacts.push({ name: '', email: '' });
-    document.getElementById('contactRows').innerHTML = renderContactRows(localContacts);
-    document.querySelectorAll('.remove-contact').forEach(btn => {
-      btn.addEventListener('click', () => {
-        // Read DOM values before removing
-        const rows = document.querySelectorAll('#contactRows .contact-row');
-        if (rows.length > 0) {
-          localContacts = Array.from(rows).map(r => ({
-            name: r.querySelector('.contact-name')?.value || '',
-            email: r.querySelector('.contact-email')?.value || ''
-          }));
-        }
-        localContacts.splice(parseInt(btn.dataset.i), 1);
-        rebind();
+  function addContactRow(name, email) {
+    const container = document.getElementById('contactRows');
+    const idx = container.children.length;
+    const row = document.createElement('div');
+    row.className = 'contact-row';
+    row.dataset.i = idx;
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'contact-name';
+    nameInput.placeholder = 'Contact Name';
+    nameInput.value = name || '';
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email';
+    emailInput.className = 'contact-email';
+    emailInput.placeholder = 'Contact Email';
+    emailInput.value = email || '';
+    row.appendChild(nameInput);
+    row.appendChild(emailInput);
+    if (idx > 0) {
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn-link reject remove-contact';
+      removeBtn.innerHTML = '&#10005;';
+      removeBtn.addEventListener('click', () => {
+        row.remove();
+        // Re-index remaining rows
+        Array.from(document.getElementById('contactRows').children).forEach((r, i) => { r.dataset.i = i; });
       });
-    });
+      row.appendChild(removeBtn);
+    } else {
+      row.appendChild(document.createElement('span'));
+    }
+    container.appendChild(row);
   }
-  rebind();
+
+  // Populate initial contact rows
+  contacts.forEach(c => addContactRow(c.name, c.email));
 
   document.getElementById('addContactBtn').addEventListener('click', () => {
-    // Read DOM values BEFORE adding new row
-    const rows = document.querySelectorAll('#contactRows .contact-row');
-    if (rows.length > 0) {
-      localContacts = Array.from(rows).map(r => ({
-        name: r.querySelector('.contact-name')?.value || '',
-        email: r.querySelector('.contact-email')?.value || ''
-      }));
-    }
-    localContacts.push({ name: '', email: '' });
-    rebind();
+    addContactRow('', '');
   });
 
   document.getElementById('vendorForm').addEventListener('submit', ev => {
