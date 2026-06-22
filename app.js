@@ -1326,7 +1326,8 @@ function openRequestForm(id) {
 
   const preselectExpense = isExpenseEdit ? '__dept_expense__' : '';
   const preselectVendor = req ? req.vendorId : '';
-  const initialVendorVal = isExpenseEdit ? '__dept_expense__' : (preselectVendor || '');
+  // Default to '__dept_expense__' for new forms so Expense Category is visible immediately
+  const initialVendorVal = isExpenseEdit ? '__dept_expense__' : (preselectVendor || '__dept_expense__');
 
   modal.innerHTML = `
   <div class="modal-box">
@@ -1427,7 +1428,7 @@ function openRequestForm(id) {
               ${allSubcats.map(s => '<option value="' + s.id + '" ' + (req && req.subcategory === s.id ? 'selected' : '') + '>' + escapeHtml(s.name) + '</option>').join('')}
             </select>
           </div>
-          <div class="field-group">
+          <div id="behalfOfFieldWrapper" class="field-group" style="${req && req.budgetSource==='behalf' ? '' : 'display:none'}">
             <label>Behalf Of</label>
             <input type="text" id="rBehalfOf" value="${req && req.onBehalf && req.behalfName ? escapeHtml(req.behalfName) : ''}" placeholder="Third party if applicable" />
           </div>
@@ -1449,7 +1450,10 @@ function openRequestForm(id) {
   });
 
   document.getElementById('rBudgetSource').addEventListener('change', function() {
-    document.getElementById('behalfSection').style.display = this.value === 'behalf' ? '' : 'none';
+    const isBehalf = this.value === 'behalf';
+    document.getElementById('behalfSection').style.display = isBehalf ? '' : 'none';
+    const behalfOfWrapper = document.getElementById('behalfOfFieldWrapper');
+    if (behalfOfWrapper) behalfOfWrapper.style.display = isBehalf ? '' : 'none';
   });
 
   document.getElementById('requestForm').addEventListener('submit', function(e) {
