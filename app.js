@@ -504,7 +504,8 @@ function renderShell() {
       </header>
       <main class="main-content" id="mainContent"></main>
     </div>
-  </div>`;
+  </div>
+  <div id="behalfModal" class="modal-overlay" style="display:none"></div>`;
 }
 
 function attachShellHandlers() {
@@ -927,10 +928,10 @@ function renderDashboard(content, actions) {
       <div class="stat-sub">${requests.length} total requests</div>
     </div>
     ${behalfSpent > 0 ? `
-    <div class="stat-card accent-purple" style="border-left:4px solid #7c3aed;">
+    <div class="stat-card clickable" style="border-left:4px solid #7c3aed;cursor:pointer;" onclick="showBehalfModal()">
       <div class="stat-label">Fees Paid on Behalf of Third Parties</div>
       <div class="stat-value">${formatCurrency(behalfSpent)}</div>
-      <div class="stat-sub">Excluded from legal budget</div>
+      <div class="stat-sub">Excluded from legal budget &nbsp;&#8250;</div>
     </div>` : ''}
   </div>
 
@@ -2077,6 +2078,60 @@ function markAllRead() {
 function closeModal(id) {
   const m = document.getElementById(id);
   if (m) m.style.display = 'none';
+}
+
+function showBehalfModal() {
+  const modal = document.getElementById('behalfModal');
+  if (!modal) return;
+
+  const behalfItems = [
+    ...STATE.budgetRequests.filter(r => r.status === 'approved' && r.budgetSource === 'behalf'),
+    ...STATE.expenses.filter(e => e.status === 'approved' && e.budgetSource === 'behalf')
+  ].sort((a, b) => new Date(b.paymentDate || b.submittedAt) - new Date(a.paymentDate || a.submittedAt));
+
+  const totalBehalf = behalfItems.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
+
+  const rows = behalfItems.map(item => {
+    const vendor = STATE.vendors.find(v => v.id === item.vendorId);
+    const owner = STATE.users.find(u => u.email === (item.owner || item.submittedBy));
+    return '<tr>' +
+      '<td>' + escapeHtml(owner ? owner.name : (item.owner || item.submittedBy || '—')) + '</td>' +
+      '<td>' + escapeHtml(vendor ? vendor.name : (item.vendorId === '__dept_expense__' ? 'Dept. Expense' : '—')) + '</td>' +
+      '<td class="desc-cell">' + escapeHtml(item.description || '—') + '</td>' +
+      '<td>' + escapeHtml(item.behalfName || '—') + '</td>' +
+      '<td style="text-align:right;font-weight:600;">' + formatCurrency(item.amount) + '</td>' +
+      '<td>' + formatDate(item.paymentDate) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  modal.style.display = 'flex';
+  modal.innerHTML = `
+  <div class="modal-box" style="max-width:780px;">
+    <div class="modal-header" style="border-bottom:3px solid #7c3aed;">
+      <h2 style="color:#7c3aed;">Fees Paid on Behalf of Third Parties</h2>
+      <button class="modal-close" onclick="closeModal('behalfModal')">&#10005;</button>
+    </div>
+    <div class="modal-form">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-size:13px;color:var(--text-muted);">${behalfItems.length} approved item(s) — excluded from Legal Department Budget</span>
+        <span style="font-size:18px;font-weight:700;color:#7c3aed;">${formatCurrency(totalBehalf)}</span>
+      </div>
+      ${behalfItems.length === 0 ? '<div class="empty-note">No on-behalf items found.</div>' : `
+      <div style="overflow-x:auto;">
+        <table class="data-table" style="font-size:13px;">
+          <thead><tr>
+            <th>Owner</th>
+            <th>Vendor</th>
+            <th>Description</th>
+            <th>Third Party</th>
+            <th style="text-align:right;">Amount</th>
+            <th>Payment Date</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`}
+    </div>
+  </div>`;
 }
 
 function showToast(msg) {
