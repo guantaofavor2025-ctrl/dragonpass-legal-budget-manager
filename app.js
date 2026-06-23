@@ -563,18 +563,19 @@ function renderBudgetConfig(content, actions) {
   const totalAllocated = Object.values(cfg.subcategoryAllocations).reduce((a, b) => a + b, 0);
   const diff = cfg.totalBudget - totalAllocated;
 
-  const allRequests = STATE.budgetRequests.filter(r => r.status === 'approved');
-  const allExpenses = STATE.expenses.filter(e => e.status === 'approved');
+  // Exclude on-behalf items from legal budget calculations
+  const allRequests = STATE.budgetRequests.filter(r => r.status === 'approved' && r.budgetSource !== 'behalf');
+  const allExpenses = STATE.expenses.filter(e => e.status === 'approved' && e.budgetSource !== 'behalf');
   const totalSpending = [...allRequests, ...allExpenses].reduce((s, x) => s + (parseFloat(x.amount)||0), 0);
   const budgetPct = cfg.totalBudget ? Math.round((totalSpending / cfg.totalBudget) * 100) : 0;
   const remainingBudget = Math.max(0, cfg.totalBudget - totalSpending);
 
-  // Per-subcategory spending
+  // Per-subcategory spending (legal budget only, excluding on-behalf)
   const spendingBySubcat = {};
-  STATE.budgetRequests.filter(r => r.status === 'approved' && r.subcategory).forEach(r => {
+  STATE.budgetRequests.filter(r => r.status === 'approved' && r.subcategory && r.budgetSource !== 'behalf').forEach(r => {
     spendingBySubcat[r.subcategory] = (spendingBySubcat[r.subcategory] || 0) + (parseFloat(r.amount) || 0);
   });
-  STATE.expenses.filter(e => e.status === 'approved' && e.subcategory).forEach(e => {
+  STATE.expenses.filter(e => e.status === 'approved' && e.subcategory && e.budgetSource !== 'behalf').forEach(e => {
     spendingBySubcat[e.subcategory] = (spendingBySubcat[e.subcategory] || 0) + (parseFloat(e.amount) || 0);
   });
 
@@ -852,24 +853,36 @@ function renderDashboard(content, actions) {
   const vendors = STATE.vendors;
   const cfg = STATE.budgetConfig || { totalBudget: 1223200, subcategoryAllocations: {} };
 
-  const totalVendorBudget = requests.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
-  const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
-  const totalSpent = totalVendorBudget + totalExpenses;
-  const pendingApprovals = [...requests, ...expenses, ...vendors.filter(v=>v.status==='pending')].filter(x => x.status === 'pending').length;
-  const approvedRequests = requests.filter(r => r.status === 'approved').length;
-  const rejectedRequests = requests.filter(r => r.status === 'rejected').length;
+  // Split approved items into legal-budget vs on-behalf
+  const approvedRequests_all = requests.filter(r => r.status === 'approved');
+  const approvedExpenses_all = expenses.filter(e => e.status === 'approved');
 
-  const budgetUsed = totalSpent;
+  const legalRequests = approvedRequests_all.filter(r => r.budgetSource !== 'behalf');
+  const behalfRequests = approvedRequests_all.filter(r => r.budgetSource === 'behalf');
+  const legalExpenses = approvedExpenses_all.filter(e => e.budgetSource !== 'behalf');
+  const behalfExpenses = approvedExpenses_all.filter(e => e.budgetSource === 'behalf');
+
+  const legalSpent = [...legalRequests, ...legalExpenses].reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
+  const behalfSpent = [...behalfRequests, ...behalfExpenses].reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
+
+  const totalVendorBudget = approvedRequests_all.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const totalExpenses = approvedExpenses_all.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+  const pendingApprovals = [...requests, ...expenses, ...vendors.filter(v=>v.status==='pending')].filter(x => x.status === 'pending').length;
+  const approvedCount = requests.filter(r => r.status === 'approved').length;
+  const rejectedCount = requests.filter(r => r.status === 'rejected').length;
+
+  const budgetUsed = legalSpent;
   const budgetPct = cfg.totalBudget ? Math.round((budgetUsed / cfg.totalBudget) * 100) : 0;
   const budgetRemaining = Math.max(0, cfg.totalBudget - budgetUsed);
 
   const expByCategory = {};
-  expenses.forEach(e => {
+  legalExpenses.forEach(e => {
     expByCategory[e.category] = (expByCategory[e.category] || 0) + (parseFloat(e.amount) || 0);
   });
 
   const byVendor = {};
-  requests.forEach(r => {
+  legalRequests.forEach(r => {
     if (r.vendorId) {
       const v = STATE.vendors.find(x => x.id === r.vendorId);
       const name = v ? v.name : 'Unknown';
@@ -877,8 +890,19 @@ function renderDashboard(content, actions) {
     }
   });
 
-  const actualVendor = requests.filter(r => r.feeType === 'actual').reduce((s,r) => s + (parseFloat(r.amount)||0), 0);
-  const allocatedVendor = requests.filter(r => r.feeType === 'allocation').reduce((s,r) => s + (parseFloat(r.amount)||0), 0);
+  // On-behalf breakdown by third-party name
+  const byBehalfParty = {};
+  behalfRequests.forEach(r => {
+    const party = r.behalfName || 'Unknown Party';
+    byBehalfParty[party] = (byBehalfParty[party] || 0) + (parseFloat(r.amount) || 0);
+  });
+  behalfExpenses.forEach(e => {
+    const party = e.behalfName || 'Unknown Party';
+    byBehalfParty[party] = (byBehalfParty[party] || 0) + (parseFloat(e.amount) || 0);
+  });
+
+  const actualVendor = legalRequests.filter(r => r.feeType === 'actual').reduce((s,r) => s + (parseFloat(r.amount)||0), 0);
+  const allocatedVendor = legalRequests.filter(r => r.feeType === 'allocation').reduce((s,r) => s + (parseFloat(r.amount)||0), 0);
 
   content.innerHTML = `
   <div class="dashboard-grid">
@@ -899,14 +923,21 @@ function renderDashboard(content, actions) {
     </div>
     <div class="stat-card clickable accent-green" onclick="navigate('budget-requests')">
       <div class="stat-label">Approved / Rejected</div>
-      <div class="stat-value">${approvedRequests} / ${rejectedRequests}</div>
+      <div class="stat-value">${approvedCount} / ${rejectedCount}</div>
       <div class="stat-sub">${requests.length} total requests</div>
     </div>
+    ${behalfSpent > 0 ? `
+    <div class="stat-card accent-purple" style="border-left:4px solid #7c3aed;">
+      <div class="stat-label">Fees Paid on Behalf of Third Parties</div>
+      <div class="stat-value">${formatCurrency(behalfSpent)}</div>
+      <div class="stat-sub">Excluded from legal budget</div>
+    </div>` : ''}
   </div>
 
   <div class="dashboard-row">
     <div class="dash-card full">
-      <div class="dash-card-title">Budget Utilization Bar</div>
+      <div class="dash-card-title">Legal Department Budget Utilization</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Fees paid on behalf of third parties are excluded from this calculation.</div>
       <div class="budget-util-bar">
         <div class="budget-util-track">
           <div class="budget-util-fill ${budgetPct > 90 ? 'danger' : budgetPct > 70 ? 'warn' : 'good'}" style="width:${Math.min(budgetPct, 100)}%">
@@ -920,6 +951,11 @@ function renderDashboard(content, actions) {
           <span>${formatCurrency(cfg.totalBudget * 0.75)}</span>
           <span>${formatCurrency(cfg.totalBudget)}</span>
         </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px;">
+        <span><strong>Legal Spent:</strong> ${formatCurrency(legalSpent)}</span>
+        <span><strong>Remaining:</strong> ${formatCurrency(budgetRemaining)}</span>
+        ${behalfSpent > 0 ? '<span style="color:#7c3aed;"><strong>On-Behalf (excl.):</strong> ' + formatCurrency(behalfSpent) + '</span>' : ''}
       </div>
     </div>
   </div>
@@ -942,8 +978,8 @@ function renderDashboard(content, actions) {
     </div>
     <div class="dash-card half">
       <div class="dash-card-title">Expense by Category</div>
-      ${Object.keys(expByCategory).length === 0 ? '<div class="empty-note">No expenses recorded yet.</div>' :
-        Object.entries(expByCategory).sort((a,b)=>b[1]-a[1]).map(([cat, amt]) => '<div class="bar-row"><span class="bar-label">' + escapeHtml(cat) + '</span><div class="bar-track"><div class="bar-fill navy" style="width:' + Math.round(amt/totalExpenses*100) + '%"></div></div><span class="bar-val">' + formatCurrency(amt) + '</span></div>').join('')}
+      ${Object.keys(expByCategory).length === 0 ? '<div class="empty-note">No legal expenses recorded yet.</div>' :
+        (() => { const legalExpTotal = Object.values(expByCategory).reduce((a,b)=>a+b,0); return Object.entries(expByCategory).sort((a,b)=>b[1]-a[1]).map(([cat, amt]) => '<div class="bar-row"><span class="bar-label">' + escapeHtml(cat) + '</span><div class="bar-track"><div class="bar-fill navy" style="width:' + (legalExpTotal ? Math.round(amt/legalExpTotal*100) : 0) + '%"></div></div><span class="bar-val">' + formatCurrency(amt) + '</span></div>').join(''); })()}
     </div>
   </div>
 
@@ -953,6 +989,15 @@ function renderDashboard(content, actions) {
       ${renderMiniTable(requests.slice(-5).reverse())}
     </div>
   </div>
+
+  ${behalfSpent > 0 ? `
+  <div class="dashboard-row">
+    <div class="dash-card full" style="border-left:4px solid #7c3aed;">
+      <div class="dash-card-title" style="color:#7c3aed;">Fees Paid on Behalf of Third Parties <span style="font-size:12px;font-weight:400;color:var(--text-muted);margin-left:8px;">Excluded from Legal Department Budget</span></div>
+      <div style="margin-bottom:12px;font-size:13px;color:var(--text-muted);">Total: <strong style="color:#7c3aed;font-size:15px;">${formatCurrency(behalfSpent)}</strong> across ${Object.keys(byBehalfParty).length} third-party recipient(s)</div>
+      ${Object.entries(byBehalfParty).sort((a,b)=>b[1]-a[1]).map(([party, amt]) => '<div class="bar-row"><span class="bar-label">' + escapeHtml(party) + '</span><div class="bar-track"><div class="bar-fill" style="width:' + Math.round(amt/behalfSpent*100) + '%;background:#7c3aed;"></div></div><span class="bar-val">' + formatCurrency(amt) + '</span></div>').join('')}
+    </div>
+  </div>` : ''}
 
   <div class="dashboard-row">
     <div class="dash-card half clickable" onclick="navigate('vendors')">
