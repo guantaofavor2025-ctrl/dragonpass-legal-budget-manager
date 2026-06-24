@@ -354,7 +354,8 @@ function renderEmailConfig(content, actions) {
 // ── Auth ─────────────────────────────────────────────────────
 
 function login(email, password) {
-  const user = STATE.users.find(u => u.email === email && u.password === password && u.active);
+  const emailLower = email.toLowerCase();
+  const user = STATE.users.find(u => u.email.toLowerCase() === emailLower && u.password === password && u.active);
   if (!user) return false;
   STATE.currentUser = user;
   saveState();
